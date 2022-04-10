@@ -61,11 +61,13 @@ public class LockInternals
         }
     };
 
+    // 拿不到锁, 会为之前的节点注册watcher监听器
     private final Watcher watcher = new Watcher()
     {
         @Override
         public void process(WatchedEvent event)
         {
+            // 底层就是调用this.notifyAll(), 重新进入循环, 重新竞争this锁
             client.postSafeNotify(LockInternals.this);
         }
     };
@@ -98,11 +100,13 @@ public class LockInternals
     LockInternals(CuratorFramework client, LockInternalsDriver driver, String path, String lockName, int maxLeases)
     {
         this.driver = driver;
+        // lockName默认为lock-
         this.lockName = lockName;
         this.maxLeases = maxLeases;
 
         this.client = client.newWatcherRemoveCuratorFramework();
         this.basePath = PathUtils.validatePath(path);
+        // 拼接节点路径, /path/lockName
         this.path = ZKPaths.makePath(path, lockName);
     }
 
@@ -121,6 +125,7 @@ public class LockInternals
     {
         client.removeWatchers();
         revocable.set(null);
+        // 释放锁, 就删除掉这个节点, lockPath格式如/ahao-lock/_c_ff554742-cc5b-4deb-8ae8-22fbaa443964-lock-0000000001
         deleteOurPath(lockPath);
     }
 
@@ -151,6 +156,7 @@ public class LockInternals
     {
         try
         {
+            // 获取构造函数传进来的/ahao-lock下的所有子节点, 也就是这个锁下的所有临时顺序节点
             List<String> children = client.getChildren().forPath(basePath);
             List<String> sortedList = Lists.newArrayList(children);
             Collections.sort
@@ -161,6 +167,9 @@ public class LockInternals
                     @Override
                     public int compare(String lhs, String rhs)
                     {
+                        // 修正要排序的内容
+                        // lockName是默认的lock-
+                        // 默认实现类是StandardLockInternalsDriver, 只对lock-后面的值, 也就是自增id进行排序
                         return sorter.fixForSorting(lhs, lockName).compareTo(sorter.fixForSorting(rhs, lockName));
                     }
                 }
@@ -193,6 +202,8 @@ public class LockInternals
 
     List<String> getSortedChildren() throws Exception
     {
+        // basePath就是构造函数传进来的/ahao-lock
+        // lockName是默认的lock-
         return getSortedChildren(client, basePath, lockName, driver);
     }
 
@@ -222,7 +233,9 @@ public class LockInternals
 
             try
             {
+                // 创建一个临时顺序节点, 把节点路径返回出来
                 ourPath = driver.createsTheLock(client, path, localLockNodeBytes);
+                // 创建成功后, 内部还要根据节点的index, 去判断是否加锁成功, 没有还要加上watcher监听器去等待时机加锁
                 hasTheLock = internalLockLoop(startMillis, millisToWait, ourPath);
             }
             catch ( KeeperException.NoNodeException e )
@@ -281,16 +294,21 @@ public class LockInternals
 
             while ( (client.getState() == CuratorFrameworkState.STARTED) && !haveTheLock )
             {
+                // 获取这个锁下的所有临时顺序节点, 然后对自增id进行排序
                 List<String>        children = getSortedChildren();
+                // 获取当前顺序节点的名称
                 String              sequenceNodeName = ourPath.substring(basePath.length() + 1); // +1 to include the slash
 
+                // 判断当前节点是否最小index的节点
                 PredicateResults    predicateResults = driver.getsTheLock(client, children, sequenceNodeName, maxLeases);
                 if ( predicateResults.getsTheLock() )
                 {
+                    // 如果是, 就获取锁成功
                     haveTheLock = true;
                 }
                 else
                 {
+                    // 如果不是, 就说明前面有获取锁失败, 要为之前的某个节点添加watcher监听器
                     String  previousSequencePath = basePath + "/" + predicateResults.getPathToWatch();
 
                     synchronized(this)
@@ -298,7 +316,9 @@ public class LockInternals
                         try
                         {
                             // use getData() instead of exists() to avoid leaving unneeded watchers which is a type of resource leak
+                            // 为之前的某个节点添加watcher监听器, 当节点发生变化时会执行notifyAll()重新竞争this锁, 重新循环竞争zk锁
                             client.getData().usingWatcher(watcher).forPath(previousSequencePath);
+                            // 然后就调用wait阻塞, 并释放这个对象锁
                             if ( millisToWait != null )
                             {
                                 millisToWait -= (System.currentTimeMillis() - startMillis);
@@ -309,10 +329,12 @@ public class LockInternals
                                     break;
                                 }
 
+                                // 让当前线程进入等待状态，并释放掉这个对象锁
                                 wait(millisToWait);
                             }
                             else
                             {
+                                // 让当前线程进入等待状态，并释放掉这个对象锁
                                 wait();
                             }
                         }
@@ -344,6 +366,7 @@ public class LockInternals
     {
         try
         {
+            // 删除节点
             client.delete().guaranteed().forPath(ourPath);
         }
         catch ( KeeperException.NoNodeException e )

@@ -32,12 +32,16 @@ public class StandardLockInternalsDriver implements LockInternalsDriver
     @Override
     public PredicateResults getsTheLock(CuratorFramework client, List<String> children, String sequenceNodeName, int maxLeases) throws Exception
     {
+        // 获取本次创建的临时顺序节点, 在排序后的兄弟节点之间的位置index
         int             ourIndex = children.indexOf(sequenceNodeName);
         validateOurIndex(sequenceNodeName, ourIndex);
 
+        // maxLeases默认是1, 也就是允许同时几个线程获取到这个锁
         boolean         getsTheLock = ourIndex < maxLeases;
+        // 如果拿不到锁, 就拿到前maxLeases位的节点, 用来加watcher监听器
         String          pathToWatch = getsTheLock ? null : children.get(ourIndex - maxLeases);
 
+        // 封装成一个结果返回出去
         return new PredicateResults(pathToWatch, getsTheLock);
     }
 
@@ -47,12 +51,16 @@ public class StandardLockInternalsDriver implements LockInternalsDriver
         String ourPath;
         if ( lockNodeBytes != null )
         {
+            // 创建一个临时顺序节点, 值为lockNodeBytes, 自动递归创建父节点, withProtection保护模式
             ourPath = client.create().creatingParentContainersIfNeeded().withProtection().withMode(CreateMode.EPHEMERAL_SEQUENTIAL).forPath(path, lockNodeBytes);
         }
         else
         {
+            // 创建一个临时顺序节点, 值为null, 自动递归创建父节点, withProtection保护模式
             ourPath = client.create().creatingParentContainersIfNeeded().withProtection().withMode(CreateMode.EPHEMERAL_SEQUENTIAL).forPath(path);
         }
+        // 返回创建节点所在的路径
+        // 如果path为/ahao-lock/lock-, 那么ourPath为/ahao-lock/_c_ff554742-cc5b-4deb-8ae8-22fbaa443964-lock-0000000001
         return ourPath;
     }
 

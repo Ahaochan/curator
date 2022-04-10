@@ -35,6 +35,7 @@ import org.apache.curator.utils.PathUtils;
  * use the same lock path will achieve an inter-process critical section. Further, this mutex is
  * "fair" - each user will get the mutex in the order requested (from ZK's point of view)
  */
+// 可重入锁
 public class InterProcessMutex implements InterProcessLock, Revocable<InterProcessMutex>
 {
     private final LockInternals internals;
@@ -84,10 +85,13 @@ public class InterProcessMutex implements InterProcessLock, Revocable<InterProce
      * @throws Exception ZK errors, connection interruptions
      */
     @Override
+    // 加锁
     public void acquire() throws Exception
     {
+        // 传-1进去是阻塞加锁
         if ( !internalLock(-1, null) )
         {
+            // 如果加锁失败, 返回false, 就抛出异常
             throw new IOException("Lost connection while trying to acquire lock: " + basePath);
         }
     }
@@ -133,16 +137,20 @@ public class InterProcessMutex implements InterProcessLock, Revocable<InterProce
             can be only acted on by a single thread so locking isn't necessary
          */
 
+        // 拿到当前线程绑定的LockData, 只要加过锁, 就一定存在
         Thread currentThread = Thread.currentThread();
         LockData lockData = threadData.get(currentThread);
         if ( lockData == null )
         {
+            // 不存在说明没有加过锁, 就直接抛出异常
             throw new IllegalMonitorStateException("You do not own the lock: " + basePath);
         }
 
+        // 对锁重入次数-1
         int newLockCount = lockData.lockCount.decrementAndGet();
         if ( newLockCount > 0 )
         {
+            // 如果锁重入次数大于0, 说明当前线程还持有锁, 就直接返回不做其他操作了
             return;
         }
         if ( newLockCount < 0 )
@@ -151,10 +159,12 @@ public class InterProcessMutex implements InterProcessLock, Revocable<InterProce
         }
         try
         {
+            // 如果锁重入次数为0, 就要和zk通信, 释放锁
             internals.releaseLock(lockData.lockPath);
         }
         finally
         {
+            // 释放锁完毕后, 还要从Map中释放掉当前线程绑定的LockData, 避免内存泄漏
             threadData.remove(currentThread);
         }
     }
@@ -192,6 +202,7 @@ public class InterProcessMutex implements InterProcessLock, Revocable<InterProce
     InterProcessMutex(CuratorFramework client, String path, String lockName, int maxLeases, LockInternalsDriver driver)
     {
         basePath = PathUtils.validatePath(path);
+        // lockName默认为lock-
         internals = new LockInternals(client, driver, path, lockName, maxLeases);
     }
 
@@ -226,17 +237,21 @@ public class InterProcessMutex implements InterProcessLock, Revocable<InterProce
 
         Thread currentThread = Thread.currentThread();
 
+        // 拿到下面put进去的当前线程的LockData
         LockData lockData = threadData.get(currentThread);
         if ( lockData != null )
         {
             // re-entering
+            // 如果存在, 说明之前加过锁了, 锁重入次数+1
             lockData.lockCount.incrementAndGet();
             return true;
         }
 
+        // 和zk通信, 加锁, getLockNodeBytes()就是null, 把阻塞时间传进去
         String lockPath = internals.attemptLock(time, unit, getLockNodeBytes());
         if ( lockPath != null )
         {
+            // 如果拿到了lockPath, 说明加锁成功, 就给当前线程绑定一个LockData, 后面用来做可重入锁
             LockData newLockData = new LockData(currentThread, lockPath);
             threadData.put(currentThread, newLockData);
             return true;

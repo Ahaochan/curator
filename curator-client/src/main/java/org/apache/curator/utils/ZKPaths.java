@@ -498,6 +498,7 @@ public class ZKPaths
     private static void joinPath(StringBuilder path, String parent, String child)
     {
         // Add parent piece, with no trailing slash.
+        // 去除parent中的/斜杠, 格式化为/parent
         if ( (parent != null) && (parent.length() > 0) )
         {
             if ( parent.charAt(0) != PATH_SEPARATOR_CHAR )
@@ -514,6 +515,7 @@ public class ZKPaths
             }
         }
 
+        // 如果child为空, 就直接返回/parent
         if ( (child == null) || (child.length() == 0) ||
                 (child.length() == 1 && child.charAt(0) == PATH_SEPARATOR_CHAR) )
         {
@@ -549,6 +551,7 @@ public class ZKPaths
         }
 
         // Finally, add the child.
+        // 去除child中的/斜杠, 格式化为/parent/child
         path.append(child, childAppendBeginIndex, childAppendEndIndex);
     }
 
