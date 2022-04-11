@@ -126,8 +126,10 @@ public class InterProcessSemaphoreV2
     {
         this.client = client.newWatcherRemoveCuratorFramework();
         path = PathUtils.validatePath(path);
+        // 创建了一个可重入锁, 锁的路径为/ahao-semaphore-v2/locks
         lock = new InterProcessMutex(client, ZKPaths.makePath(path, LOCK_PARENT));
         this.maxLeases = (count != null) ? count.getCount() : maxLeases;
+        // lease的路径为ahao-semaphore-v2/leases
         leasesPath = ZKPaths.makePath(path, LEASE_PARENT);
 
         if ( count != null )
@@ -209,6 +211,7 @@ public class InterProcessSemaphoreV2
      */
     public Lease acquire() throws Exception
     {
+        // 获取一个资源, 无限等待
         Collection<Lease> leases = acquire(1, 0, null);
         return leases.iterator().next();
     }
@@ -274,13 +277,16 @@ public class InterProcessSemaphoreV2
         boolean success = false;
         try
         {
+            // 要申请n个资源, 就循环n次
             while ( qty-- > 0 )
             {
                 int retryCount = 0;
                 long startMillis = System.currentTimeMillis();
                 boolean isDone = false;
+                // 循环阻塞获取1个资源
                 while ( !isDone )
                 {
+                    // 阻塞获取1个资源
                     switch ( internalAcquire1Lease(builder, startMs, hasWait, waitMs) )
                     {
                         case CONTINUE:
@@ -341,6 +347,7 @@ public class InterProcessSemaphoreV2
 
         if ( hasWait )
         {
+            // 如果有等待时间, 就加锁, 并设置等待时间, 保证同时只有一个线程去申请资源
             long thisWaitMs = getThisWaitMs(startMs, waitMs);
             if ( !lock.acquire(thisWaitMs, TimeUnit.MILLISECONDS) )
             {
@@ -349,6 +356,7 @@ public class InterProcessSemaphoreV2
         }
         else
         {
+            // 如果没有等待时间, 就直接加锁, 保证同时只有一个线程去申请资源
             lock.acquire();
         }
 
@@ -357,9 +365,12 @@ public class InterProcessSemaphoreV2
 
         try
         {
+            // 给/ahao-semaphore-v2/lease目录下创建临时顺序节点, 如/ahao-semaphore-v2/leases/_c_5cdd5e44-32f3-433d-a773-2959f2ffd5c1-lease-0000000001
             PathAndBytesable<String> createBuilder = client.create().creatingParentContainersIfNeeded().withProtection().withMode(CreateMode.EPHEMERAL_SEQUENTIAL);
             String path = (nodeData != null) ? createBuilder.forPath(ZKPaths.makePath(leasesPath, LEASE_BASE_NAME), nodeData) : createBuilder.forPath(ZKPaths.makePath(leasesPath, LEASE_BASE_NAME));
+            // 获取节点名称_c_5cdd5e44-32f3-433d-a773-2959f2ffd5c1-lease-0000000001
             String nodeName = ZKPaths.getNodeFromPath(path);
+            // 将当前路径封装到Lease内
             lease = makeLease(path);
 
             if ( debugAcquireLatch != null )
@@ -369,6 +380,7 @@ public class InterProcessSemaphoreV2
 
             try
             {
+                // 加this锁阻塞
                 synchronized(this)
                 {
                     for(;;)
@@ -376,6 +388,8 @@ public class InterProcessSemaphoreV2
                         List<String> children;
                         try
                         {
+                            // 获取/ahao-semaphore-v2/leases下所有子节点, 加上watcher监听器
+                            // 当节点发生变化时会执行notifyAll()重新竞争this锁, 重新循环
                             children = client.getChildren().usingWatcher(watcher).forPath(leasesPath);
                         }
                         catch ( Exception e )
@@ -394,8 +408,10 @@ public class InterProcessSemaphoreV2
 
                         if ( children.size() <= maxLeases )
                         {
+                            // 如果 临时顺序接待数量 小于等于 允许申请的资源的最大数量, 就获取成功了, 跳出循环, 不执行后面的等待逻辑
                             break;
                         }
+                        // 如果 临时顺序接待数量 大于 允许申请的资源的最大数量, 说明要等待占用资源的线程释放资源, 当前线程才能抢占资源
                         if ( hasWait )
                         {
                             long thisWaitMs = getThisWaitMs(startMs, waitMs);
@@ -407,6 +423,7 @@ public class InterProcessSemaphoreV2
                             {
                                 debugWaitLatch.countDown();
                             }
+                            // 让当前线程进入等待状态，并释放掉这个对象锁
                             wait(thisWaitMs);
                         }
                         else
@@ -415,6 +432,7 @@ public class InterProcessSemaphoreV2
                             {
                                 debugWaitLatch.countDown();
                             }
+                            // 让当前线程进入等待状态，并释放掉这个对象锁
                             wait();
                         }
                     }
@@ -425,6 +443,8 @@ public class InterProcessSemaphoreV2
             {
                 if ( !success )
                 {
+                    // 调用lease的close()方法, 就是去删除临时顺序节点
+                    // /ahao-semaphore-v2/leases/_c_5cdd5e44-32f3-433d-a773-2959f2ffd5c1-lease-0000000001
                     returnLease(lease);
                 }
                 client.removeWatchers();
@@ -432,6 +452,7 @@ public class InterProcessSemaphoreV2
         }
         finally
         {
+            // 释放zk锁
             lock.release();
         }
         builder.add(Preconditions.checkNotNull(lease));
