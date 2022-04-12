@@ -40,12 +40,14 @@ public class InterProcessSemaphoreMutex implements InterProcessLock
     public InterProcessSemaphoreMutex(CuratorFramework client, String path)
     {
         watcherRemoveClient = client.newWatcherRemoveCuratorFramework();
+        // 底层基于信号量为1的semaphore来实现的
         this.semaphore = new InterProcessSemaphoreV2(watcherRemoveClient, path, 1);
     }
 
     @Override
     public void acquire() throws Exception
     {
+        // 同一时间只能有一个线程来持有锁
         lease = semaphore.acquire();
     }
 
@@ -71,6 +73,7 @@ public class InterProcessSemaphoreMutex implements InterProcessLock
     @Override
     public void release() throws Exception
     {
+        // 释放信号量, 释放锁
         Lease lease = this.lease;
         Preconditions.checkState(lease != null, "Not acquired");
 
