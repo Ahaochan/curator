@@ -109,10 +109,16 @@ public class InterProcessReadWriteLock
         }
     }
 
+    // 写锁继承自上面的InternalInterProcessMutex
     public static class WriteLock extends InternalInterProcessMutex
     {
         public WriteLock(CuratorFramework client, String basePath, byte[] lockData)
         {
+            // 核心加锁逻辑还是InterProcessMutex可重入锁来实现的
+            // 这里和读锁不同的地方
+            // 1是lockName标记为写锁
+            // 2是maxLeases最大同时获取锁数量为1, 也就是互斥锁
+            // 3是StandardLockInternalsDriver的getsTheLock方法, 没有重写, 直接复用父类的逻辑
             super(client, basePath, WRITE_LOCK_NAME, lockData, 1, new SortingLockInternalsDriver() {
                 @Override
                 public PredicateResults getsTheLock(
@@ -133,9 +139,15 @@ public class InterProcessReadWriteLock
         }
     }
 
+    // 读锁继承自上面的InternalInterProcessMutex
     public static class ReadLock extends InternalInterProcessMutex {
         public ReadLock(CuratorFramework client, String basePath, byte[] lockData, WriteLock writeLock)
         {
+            // 核心加锁逻辑还是InterProcessMutex可重入锁来实现的
+            // 这里和写锁不同的地方
+            // 1是lockName标记为写锁
+            // 2是maxLeases最大同时获取锁数量为Integer.MAX_VALUE, 也就是说加多少个读锁都是支持的
+            // 3是StandardLockInternalsDriver的getsTheLock方法, 重写了, 用来做锁互斥的逻辑
             super(client, basePath, READ_LOCK_NAME, lockData, Integer.MAX_VALUE, new SortingLockInternalsDriver() {
                 @Override
                 public PredicateResults getsTheLock(
@@ -144,6 +156,7 @@ public class InterProcessReadWriteLock
                     String sequenceNodeName,
                     int maxLeases
                 ) throws Exception {
+                    // 如果写锁的独占线程是当前线程, 就获取读锁成功, 也不用去阻塞等待加watcher监听器
                     if (writeLock.isOwnedByCurrentThread()) {
                         return new PredicateResults(null, true);
                     }
@@ -153,8 +166,10 @@ public class InterProcessReadWriteLock
                     int ourIndex = -1;
                     for (String node : children) {
                         if (node.contains(WRITE_LOCK_NAME)) {
+                            // 如果存在写锁, 就标记下写锁的下标index
                             firstWriteIndex = Math.min(index, firstWriteIndex);
                         } else if (node.startsWith(sequenceNodeName)) {
+                            // 否则是读锁, 就找到本次加读锁的节点在children中的下标index
                             ourIndex = index;
                             break;
                         }
@@ -164,7 +179,9 @@ public class InterProcessReadWriteLock
 
                     validateOurIndex(sequenceNodeName, ourIndex);
 
+                    // 如果本次加的读锁, 在写锁之前, 就说明可以拿到读锁
                     boolean getsTheLock = (ourIndex < firstWriteIndex);
+                    // 否则后面就给写锁加watcher监听器, 因为读锁不互斥, 只用阻塞在写锁这里就可以了
                     String pathToWatch = getsTheLock ? null : children.get(firstWriteIndex);
                     return new PredicateResults(pathToWatch, getsTheLock);
                 }
