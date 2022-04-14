@@ -87,17 +87,20 @@ public class InterProcessMultiLock implements InterProcessLock
         Exception                   exception = null;
         List<InterProcessLock>      acquired = Lists.newArrayList();
         boolean                     success = true;
+        // 遍历每个锁
         for ( InterProcessLock lock : locks )
         {
             try
             {
                 if ( unit == null )
                 {
+                    // 每个锁都acquire, 成功就收集起来
                     lock.acquire();
                     acquired.add(lock);
                 }
                 else
                 {
+                    // 每个锁都acquire, 成功就收集起来
                     if ( lock.acquire(time, unit) )
                     {
                         acquired.add(lock);
@@ -117,12 +120,15 @@ public class InterProcessMultiLock implements InterProcessLock
             }
         }
 
+        // 如果有任意一个加锁失败了
         if ( !success )
         {
+            // 就翻转加锁成功的集合列表
             for ( InterProcessLock lock : reverse(acquired) )
             {
                 try
                 {
+                    // 对每个锁进行解锁
                     lock.release();
                 }
                 catch ( Exception e )
@@ -154,6 +160,7 @@ public class InterProcessMultiLock implements InterProcessLock
     {
         Exception       baseException = null;
 
+        // 遍历每个锁, 进行解锁
         for ( InterProcessLock lock : reverse(locks) )
         {
             try
